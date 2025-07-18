@@ -1,14 +1,28 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
-import { FC, ReactNode } from "react";
-
-const queryClient = new QueryClient();
+import { FC, ReactNode, useState } from "react";
 
 interface Props {
   children: ReactNode;
 }
 
 const TanstackQueryProvider: FC<Props> = ({ children }) => {
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            staleTime: 30_000,
+            retry: 1,
+            refetchOnWindowFocus: false,
+          },
+          mutations: {
+            retry: 0,
+          },
+        },
+      })
+  );
+
   return (
     <QueryClientProvider client={queryClient}>
       {children}
