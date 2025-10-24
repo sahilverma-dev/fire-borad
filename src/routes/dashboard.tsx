@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   ArrowDownUp,
   LayoutGrid,
@@ -32,6 +33,7 @@ import type { Drawing } from "@/types/models";
 export default function DashboardPage() {
   const { user } = useAuth();
   const uid = user?.uid ?? "";
+  const navigate = useNavigate();
 
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<DrawingSort>("updated");
@@ -106,7 +108,7 @@ export default function DashboardPage() {
         action: {
           label: "Open copy",
           onClick: () => {
-            window.location.assign(`/d/${result.drawingId}/p/${result.pageId}`);
+            navigate(`/d/${result.drawingId}/p/${result.pageId}`);
           },
         },
       });

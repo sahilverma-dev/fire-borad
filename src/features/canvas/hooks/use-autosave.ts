@@ -31,7 +31,7 @@ export function useAutosave(
   const revision = useEditorStore((state) => state.revision);
 
   const timer = useRef<number | null>(null);
-  const saving = useRef(false);
+  const inFlight = useRef<Promise<void> | null>(null);
   const imageUsage = useRef<Map<string, number>>(new Map());
   const imageUsageReady = useRef(false);
   const previousCount = useRef<number | null>(null);
@@ -44,9 +44,7 @@ export function useAutosave(
     previousCount.current = Object.keys(elements).length;
   }, [enabled, pageId]);
 
-  const flush = useCallback(async () => {
-    if (!enabled || saving.current) return;
-
+  const runFlush = useCallback(async () => {
     const state = useEditorStore.getState();
     if (state.page?.id !== pageId) return;
 
@@ -54,7 +52,6 @@ export function useAutosave(
     const deleted = state.deleted;
     if (!Object.keys(dirty).length && !Object.keys(deleted).length) return;
 
-    saving.current = true;
     state.setStatus("saving");
     state.setError(null);
 
@@ -107,23 +104,48 @@ export function useAutosave(
           ...current.keys(),
         ]);
         for (const imageId of imageIds) {
-          const difference =
-            (current.get(imageId) ?? 0) - (imageUsage.current.get(imageId) ?? 0);
-          if (difference !== 0) {
-            await adjustImageUsage(drawingId, imageId, difference);
+          const before = imageUsage.current.get(imageId) ?? 0;
+          const after = current.get(imageId) ?? 0;
+          if (before === after) continue;
+          try {
+            await adjustImageUsage(drawingId, imageId, after - before);
+            imageUsage.current.set(imageId, after);
+          } catch {
+            // Retried on the next save; the element write already succeeded.
           }
         }
-        imageUsage.current = current;
       }
     } catch (error) {
       useEditorStore.getState().setStatus("error");
-      useEditorStore
-        .getState()
-        .setError(friendlyFirestoreError(error));
-    } finally {
-      saving.current = false;
+      useEditorStore.getState().setError(friendlyFirestoreError(error));
     }
-  }, [drawingId, pageId, enabled]);
+  }, [drawingId, pageId]);
+
+  const flush = useCallback(async () => {
+    if (!enabled) return;
+
+    // Wait for any save already on the wire so page switches never drop the
+    // most recent edits.
+    if (inFlight.current) {
+      await inFlight.current;
+    }
+
+    if (!enabled) return;
+
+    const state = useEditorStore.getState();
+    if (state.page?.id !== pageId) return;
+    if (!Object.keys(state.dirty).length && !Object.keys(state.deleted).length) {
+      return;
+    }
+
+    const promise = runFlush();
+    inFlight.current = promise;
+    try {
+      await promise;
+    } finally {
+      if (inFlight.current === promise) inFlight.current = null;
+    }
+  }, [enabled, pageId, runFlush]);
 
   useEffect(() => {
     if (!enabled || status !== "dirty") return;
