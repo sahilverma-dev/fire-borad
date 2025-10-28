@@ -2,6 +2,7 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
+import { useEffect, useState } from "react";
 
 import type { BoardElement, ImageAsset } from "@/types/models";
 
@@ -30,6 +31,13 @@ export function CanvasElement({
   onContextMenu,
 }: CanvasElementProps) {
   const { style } = element;
+  const [imageFailed, setImageFailed] = useState(false);
+  const imageUrl = asset?.url;
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [imageUrl]);
+
   const dashArray =
     style.dash === "dashed" ? "12 8" : style.dash === "dotted" ? "2 6" : undefined;
 
@@ -120,7 +128,7 @@ export function CanvasElement({
       );
     }
     case "image":
-      return asset ? (
+      return asset && !imageFailed ? (
         <image
           {...shared}
           href={asset.url}
@@ -129,6 +137,7 @@ export function CanvasElement({
           width={Math.max(1, element.w)}
           height={Math.max(1, element.h)}
           preserveAspectRatio="none"
+          onError={() => setImageFailed(true)}
         />
       ) : (
         <g {...shared}>

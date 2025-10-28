@@ -14,6 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { RemoteImage } from "@/components/shared/remote-image";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time";
 import type { Drawing } from "@/types/models";
@@ -42,21 +43,20 @@ export function DrawingCard({
         aria-label={`Open ${drawing.title}`}
       >
         <div className="relative aspect-[16/10] w-full overflow-hidden border-b border-border bg-muted">
-          {drawing.coverThumbUrl ? (
-            <img
-              src={drawing.coverThumbUrl}
-              alt=""
-              loading="lazy"
-              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
-            />
-          ) : (
-            <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-[radial-gradient(circle_at_1px_1px,hsl(var(--border))_1px,transparent_0)] [background-size:18px_18px] text-muted-foreground">
-              <FileStack className="h-6 w-6" />
-              <span className="text-xs font-medium">
-                {drawing.pageCount} {drawing.pageCount === 1 ? "page" : "pages"}
-              </span>
-            </div>
-          )}
+          <RemoteImage
+            src={drawing.coverThumbUrl}
+            alt=""
+            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+            fallback={
+              <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-[radial-gradient(circle_at_1px_1px,hsl(var(--border))_1px,transparent_0)] [background-size:18px_18px] text-muted-foreground">
+                <FileStack className="h-6 w-6" />
+                <span className="text-xs font-medium">
+                  {drawing.pageCount}{" "}
+                  {drawing.pageCount === 1 ? "page" : "pages"}
+                </span>
+              </div>
+            }
+          />
         </div>
 
         <div className="flex items-center gap-2 px-4 py-3.5">

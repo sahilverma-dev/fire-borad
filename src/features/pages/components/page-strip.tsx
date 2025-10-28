@@ -11,6 +11,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { RemoteImage } from "@/components/shared/remote-image";
 import {
   Dialog,
   DialogContent,
@@ -200,18 +201,16 @@ export function PageStrip({
                 aria-label={`Open ${page.name}`}
               >
                 <div className="relative aspect-[16/10] w-full overflow-hidden rounded-md border border-border bg-white">
-                  {page.thumbnailUrl ? (
-                    <img
-                      src={page.thumbnailUrl}
-                      alt=""
-                      className="h-full w-full object-cover"
-                      draggable={false}
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_1px_1px,#e2e8f0_1px,transparent_0)] [background-size:12px_12px] text-[10px] text-muted-foreground">
-                      {index + 1}
-                    </div>
-                  )}
+                  <RemoteImage
+                    src={page.thumbnailUrl}
+                    alt=""
+                    className="h-full w-full object-cover"
+                    fallback={
+                      <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_1px_1px,#e2e8f0_1px,transparent_0)] [background-size:12px_12px] text-[10px] text-muted-foreground">
+                        {index + 1}
+                      </div>
+                    }
+                  />
                   <span className="absolute left-1 top-1 rounded bg-background/85 px-1 text-[9px] font-medium text-muted-foreground">
                     {index + 1}
                   </span>

@@ -107,7 +107,10 @@ export default function TrashPage() {
           ))}
         </div>
       ) : drawings.isError ? (
-        <ErrorState onRetry={() => void drawings.refetch()} />
+        <ErrorState
+          message={friendlyFirestoreError(drawings.error)}
+          onRetry={() => void drawings.refetch()}
+        />
       ) : items.length === 0 ? (
         <EmptyState
           icon={Trash2}

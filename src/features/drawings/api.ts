@@ -1,3 +1,4 @@
+import { FirebaseError } from "firebase/app";
 import {
   DocumentReference,
   QueryDocumentSnapshot,
@@ -10,8 +11,7 @@ import {
   startAfter,
   where,
   writeBatch,
-} from "firebase/firestore";
-import {
+} from "firebase/firestore";import {
   deleteObject,
   getBlob,
   getDownloadURL,
@@ -52,6 +52,34 @@ export async function fetchDrawings(
   sort: DrawingSort,
   cursor: QueryDocumentSnapshot<Drawing> | null
 ): Promise<DrawingsPage> {
+  try {
+    return await fetchIndexedDrawings(uid, mode, sort, cursor);
+  } catch (error) {
+    if (isMissingIndex(error)) {
+      console.warn(
+        "Firestore composite index is missing — falling back to client-side sorting. Deploy firestore.indexes.json to enable server-side pagination.",
+        error
+      );
+      return fetchDrawingsWithoutIndex(uid, mode, sort);
+    }
+    throw error;
+  }
+}
+
+function isMissingIndex(error: unknown): boolean {
+  return (
+    error instanceof FirebaseError &&
+    error.code === "failed-precondition" &&
+    /index/i.test(error.message)
+  );
+}
+
+async function fetchIndexedDrawings(
+  uid: string,
+  mode: "active" | "trash",
+  sort: DrawingSort,
+  cursor: QueryDocumentSnapshot<Drawing> | null
+): Promise<DrawingsPage> {
   const orderField =
     mode === "trash"
       ? "deletedAt"
@@ -78,6 +106,41 @@ export async function fetchDrawings(
       ? snapshot.docs[snapshot.docs.length - 1]
       : null,
   };
+}
+
+/**
+ * Fallback for projects that don't have the composite index yet: `array-contains`
+ * only uses the automatic single-field index. Sorting/paging happens locally.
+ */
+async function fetchDrawingsWithoutIndex(
+  uid: string,
+  mode: "active" | "trash",
+  sort: DrawingSort
+): Promise<DrawingsPage> {
+  const snapshot = await getDocs(
+    query(
+      drawingsCol(),
+      where("memberIds", "array-contains", uid),
+      limit(500)
+    )
+  );
+
+  const items = snapshot.docs
+    .map((document) => document.data())
+    .filter((drawing) => drawing.isDeleted === (mode === "trash"));
+
+  items.sort((a, b) => {
+    if (mode === "trash") {
+      return (b.deletedAt?.getTime() ?? 0) - (a.deletedAt?.getTime() ?? 0);
+    }
+    if (sort === "name") return a.title.localeCompare(b.title);
+    if (sort === "created") {
+      return b.createdAt.getTime() - a.createdAt.getTime();
+    }
+    return b.updatedAt.getTime() - a.updatedAt.getTime();
+  });
+
+  return { items, cursor: null };
 }
 
 export async function fetchDrawing(drawingId: string): Promise<Drawing | null> {

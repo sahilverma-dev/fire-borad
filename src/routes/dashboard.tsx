@@ -177,7 +177,10 @@ export default function DashboardPage() {
           ))}
         </div>
       ) : drawings.isError ? (
-        <ErrorState onRetry={() => void drawings.refetch()} />
+        <ErrorState
+          message={friendlyFirestoreError(drawings.error)}
+          onRetry={() => void drawings.refetch()}
+        />
       ) : filtered.length === 0 ? (
         search ? (
           <EmptyState

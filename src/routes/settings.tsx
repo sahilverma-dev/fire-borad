@@ -1,5 +1,6 @@
 import { Check, LogOut, Monitor, Moon, Sun } from "lucide-react";
 
+import { RemoteImage } from "@/components/shared/remote-image";
 import { useAuth } from "@/components/providers/auth-context-provider";
 import { useTheme } from "@/components/providers/theme-provider";
 import { Button } from "@/components/ui/button";
@@ -30,17 +31,17 @@ export default function SettingsPage() {
           <h2 className="text-sm font-semibold">Profile</h2>
         </div>
         <div className="flex items-center gap-4 px-5 py-5">
-          {user?.photoURL ? (
-            <img
-              src={user.photoURL}
-              alt=""
-              className="h-14 w-14 rounded-full border border-border bg-muted object-cover"
-            />
-          ) : (
-            <div className="flex h-14 w-14 items-center justify-center rounded-full border border-border bg-muted text-lg font-semibold">
-              {(user?.displayName ?? "S").slice(0, 1).toUpperCase()}
-            </div>
-          )}
+          <RemoteImage
+            src={user?.photoURL}
+            alt=""
+            loading="eager"
+            className="h-14 w-14 rounded-full border border-border bg-muted object-cover"
+            fallback={
+              <div className="flex h-14 w-14 items-center justify-center rounded-full border border-border bg-muted text-lg font-semibold">
+                {(user?.displayName ?? "S").slice(0, 1).toUpperCase()}
+              </div>
+            }
+          />
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">
               {user?.displayName ?? "Someone"}
