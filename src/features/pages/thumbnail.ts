@@ -78,12 +78,12 @@ export function elementsToSvg(
 </svg>`;
 }
 
-export async function svgToWebp(
+export async function svgToDataUrl(
   svg: string,
   width: number,
   height: number,
-  maxWidth = 900
-): Promise<Blob | null> {
+  maxWidth = 720
+): Promise<string | null> {
   try {
     const scale = Math.min(1, maxWidth / Math.max(width, height));
     const image = new Image();
@@ -105,13 +105,9 @@ export async function svgToWebp(
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-    return await new Promise((resolve) => {
-      canvas.toBlob(
-        (blob) => resolve(blob),
-        "image/webp",
-        0.72
-      );
-    });
+    const webp = canvas.toDataURL("image/webp", 0.72);
+    if (webp.startsWith("data:image/webp")) return webp;
+    return canvas.toDataURL("image/jpeg", 0.72);
   } catch {
     return null;
   }

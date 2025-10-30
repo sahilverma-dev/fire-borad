@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { savePageThumbnail } from "@/features/pages/api";
-import { elementsToSvg, svgToWebp } from "@/features/pages/thumbnail";
+import { elementsToSvg, svgToDataUrl } from "@/features/pages/thumbnail";
 import { useEditorStore } from "@/features/canvas/store/editor-store";
 import { queryKeys } from "@/lib/query-keys";
 import type { Drawing, Page } from "@/types/models";
@@ -11,7 +11,6 @@ const THUMBNAIL_DELAY = 2200;
 
 export function usePageThumbnail(options: {
   drawingId: string;
-  uid: string;
   isFirstPage: boolean;
   enabled: boolean;
 }) {
@@ -30,15 +29,14 @@ export function usePageThumbnail(options: {
         a.order.localeCompare(b.order)
       );
       const svg = elementsToSvg(elements, page);
-      const blob = await svgToWebp(svg, page.width, page.height);
-      if (!blob) return;
+      const dataUrl = await svgToDataUrl(svg, page.width, page.height);
+      if (!dataUrl) return;
 
       try {
-        const url = await savePageThumbnail({
+        await savePageThumbnail({
           drawingId: options.drawingId,
           pageId: page.id,
-          uid: options.uid,
-          blob,
+          dataUrl,
           isFirstPage: options.isFirstPage,
         });
 
@@ -47,11 +45,7 @@ export function usePageThumbnail(options: {
           (pages) =>
             pages?.map((item) =>
               item.id === page.id
-                ? {
-                    ...item,
-                    thumbnailUrl: url,
-                    thumbnailPath: `users/${options.uid}/drawings/${options.drawingId}/thumbs/${page.id}.webp`,
-                  }
+                ? { ...item, thumbnailUrl: dataUrl }
                 : item
             )
         );
@@ -60,14 +54,14 @@ export function usePageThumbnail(options: {
           queryClient.setQueryData<Drawing | null>(
             queryKeys.drawing(options.drawingId),
             (drawing) =>
-              drawing ? { ...drawing, coverThumbUrl: url } : drawing
+              drawing ? { ...drawing, coverThumbUrl: dataUrl } : drawing
           );
         }
       } catch {
-        // Thumbnails are a nice-to-have; never interrupt editing for them.
+        // Thumbnails are cosmetic; never interrupt editing for them.
       }
     }, THUMBNAIL_DELAY);
 
     return () => window.clearTimeout(timer);
-  }, [status, options.enabled, options.drawingId, options.uid, options.isFirstPage, queryClient]);
+  }, [status, options.enabled, options.drawingId, options.isFirstPage, queryClient]);
 }

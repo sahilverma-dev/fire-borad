@@ -69,7 +69,6 @@ export default function EditorPage() {
 
   usePageThumbnail({
     drawingId,
-    uid,
     isFirstPage: pagesQuery.data?.[0]?.id === pageId,
     enabled: ready,
   });

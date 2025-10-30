@@ -111,7 +111,6 @@ export interface Page {
   height: number;
   background: PageBackground;
   thumbnailUrl: string | null;
-  thumbnailPath: string | null;
   elementCount: number;
   version: number;
   createdAt: Date;
@@ -122,9 +121,7 @@ export interface Page {
 export interface ImageAsset {
   id: string;
   drawingId: string;
-  storagePath: string;
-  largePath: string;
-  thumbPath: string;
+  /** Base64 WebP data URL — Firestore only, no Cloud Storage. */
   url: string;
   thumbUrl: string;
   width: number;

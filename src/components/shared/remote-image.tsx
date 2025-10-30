@@ -9,8 +9,8 @@ interface RemoteImageProps {
 }
 
 /**
- * An <img> that never leaves a broken icon behind. Firebase Storage can answer
- * image downloads with 402/404 (quota, missing object), in which case we show
+ * An <img> that never leaves a broken icon behind. Remote sources can answer
+ * image requests with 402/404 (quota, missing object), in which case we show
  * the caller's placeholder instead.
  */
 export function RemoteImage({

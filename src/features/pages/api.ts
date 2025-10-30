@@ -7,9 +7,8 @@ import {
   serverTimestamp,
   writeBatch,
 } from "firebase/firestore";
-import { deleteObject, getDownloadURL, ref, uploadBytes } from "firebase/storage";
 
-import { db, storage } from "@/firebase/config";
+import { db } from "@/firebase/config";
 import { adjustImageUsage } from "@/features/images/api";
 import { commitWrites, type PendingWrite } from "@/lib/firestore/batch";
 import { newId } from "@/lib/id";
@@ -21,7 +20,6 @@ import {
   pageTypedDoc,
   pagesCol,
 } from "@/lib/firestore/paths";
-import { storagePaths } from "@/lib/storage-paths";
 import type { BoardElement, Page } from "@/types/models";
 
 export async function fetchPages(drawingId: string): Promise<Page[]> {
@@ -54,7 +52,6 @@ export async function createPage(options: {
     height: 1000,
     background: { type: "dots", color: "#ffffff" },
     thumbnailUrl: null,
-    thumbnailPath: null,
     elementCount: 0,
     version: 1,
     createdAt: serverTimestamp(),
@@ -126,7 +123,6 @@ export async function duplicatePage(
       height: page.height,
       background: page.background,
       thumbnailUrl: null,
-      thumbnailPath: null,
       elementCount: elementsSnapshot.size,
       version: 1,
       createdAt: serverTimestamp(),
@@ -200,14 +196,6 @@ export async function deletePage(
     await batch.commit();
   }
 
-  if (page.thumbnailPath) {
-    try {
-      await deleteObject(ref(storage, page.thumbnailPath));
-    } catch {
-      // Thumbnail already gone.
-    }
-  }
-
   const batch = writeBatch(db);
   batch.delete(pageDoc(drawingId, page.id));
   batch.update(drawingDoc(drawingId), {
@@ -225,23 +213,13 @@ export async function deletePage(
 export async function savePageThumbnail(options: {
   drawingId: string;
   pageId: string;
-  uid: string;
-  blob: Blob;
+  dataUrl: string;
   isFirstPage: boolean;
 }): Promise<string> {
-  const path = storagePaths.pageThumb(
-    options.uid,
-    options.drawingId,
-    options.pageId
-  );
-  const objectRef = ref(storage, path);
-  await uploadBytes(objectRef, options.blob, { contentType: "image/webp" });
-  const url = await getDownloadURL(objectRef);
-
   const writes: PendingWrite[] = [
     {
       ref: pageDoc(options.drawingId, options.pageId),
-      data: { thumbnailUrl: url, thumbnailPath: path },
+      data: { thumbnailUrl: options.dataUrl },
       mode: "update",
     },
   ];
@@ -249,11 +227,11 @@ export async function savePageThumbnail(options: {
   if (options.isFirstPage) {
     writes.push({
       ref: drawingDoc(options.drawingId),
-      data: { coverThumbUrl: url },
+      data: { coverThumbUrl: options.dataUrl },
       mode: "update",
     });
   }
 
   await commitWrites(writes);
-  return url;
+  return options.dataUrl;
 }

@@ -2,7 +2,8 @@
 
 A multi-page drawing app built with React, Vite, Tailwind and Firebase. Every
 account owns its own drawings; each drawing has pages, each page has elements,
-and images are stored in Firebase Storage rather than inside Firestore.
+and images are compressed and stored inside Firestore — no Cloud Storage bucket
+is required.
 
 ## Features
 
@@ -16,9 +17,10 @@ and images are stored in Firebase Storage rather than inside Firestore.
 - Autosave with visible save status and retry
 - Image uploads from the toolbar, drag-and-drop or clipboard paste
   - client-side downscale + WebP conversion
+  - progressive compression until the image fits in a Firestore document
   - 400px thumbnails
   - SHA-256 de-duplication inside a drawing
-  - original kept in Storage for future export
+  - stored as data URLs in Firestore, never in Cloud Storage
 - Soft-delete trash with restore and permanent delete
 - Offline persistence through the Firestore local cache
 - Dark / light / system themes
@@ -43,11 +45,11 @@ cp .env.example .env
 npm run dev
 ```
 
-Enable **Google** in Firebase Authentication, create a Firestore database and a
-Storage bucket, then deploy the rules and indexes:
+Enable **Google** in Firebase Authentication and create a Firestore database,
+then deploy the rules and indexes:
 
 ```bash
-firebase deploy --only firestore:rules,firestore:indexes,storage
+firebase deploy --only firestore:rules,firestore:indexes
 ```
 
 Or run everything locally:
@@ -73,18 +75,13 @@ drawings/{drawingId}/pages/{pageId}/elements/{elementId}
   type, order, x, y, w, h, angle, opacity, style, text/points/image
 
 drawings/{drawingId}/images/{imageId}
-  storagePath, largePath, thumbPath, url, thumbUrl, width, height,
+  url (base64 WebP), thumbUrl (base64 WebP), width, height,
   bytes, contentType, sha256, refCount
 ```
 
-Storage layout:
-
-```
-users/{uid}/drawings/{drawingId}/images/{imageId}/original.*
-users/{uid}/drawings/{drawingId}/images/{imageId}/large.webp
-users/{uid}/drawings/{drawingId}/images/{imageId}/thumb.webp
-users/{uid}/drawings/{drawingId}/thumbs/{pageId}.webp
-```
+Images are compressed to fit under the Firestore 1 MiB document limit. The
+largest encoded image is capped at ~700 KB of base64 text, with a much smaller
+thumbnail used for page previews.
 
 Ordering uses fractional index strings, so reordering a page or moving an
 element to the front is a single document write.

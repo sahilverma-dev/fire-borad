@@ -1,5 +1,5 @@
 const MAX_ORIGINAL_BYTES = 15 * 1024 * 1024;
-const LARGE_MAX_DIMENSION = 2048;
+const MAX_IMAGE_DATA_URL_CHARS = 700_000;
 const THUMB_MAX_DIMENSION = 400;
 
 const ACCEPTED_TYPES = new Set([
@@ -10,30 +10,33 @@ const ACCEPTED_TYPES = new Set([
 ]);
 
 export interface ProcessedImage {
-  original: Blob;
-  large: Blob;
-  thumb: Blob;
+  /** Base64 WebP data URL stored in Firestore (never Cloud Storage). */
+  url: string;
+  thumbUrl: string;
   width: number;
   height: number;
+  bytes: number;
   contentType: string;
-  ext: string;
   sha256: string;
 }
 
 export class ImageProcessingError extends Error {}
 
-function extensionFor(type: string): string {
-  switch (type) {
-    case "image/png":
-      return "png";
-    case "image/webp":
-      return "webp";
-    case "image/gif":
-      return "gif";
-    default:
-      return "jpg";
-  }
-}
+/**
+ * Progressively downscales/compresses until the encoded image fits comfortably
+ * inside a Firestore document (1 MiB limit).
+ */
+const CANDIDATES: { dimension: number; quality: number }[] = [
+  { dimension: 2048, quality: 0.82 },
+  { dimension: 1800, quality: 0.76 },
+  { dimension: 1600, quality: 0.72 },
+  { dimension: 1400, quality: 0.68 },
+  { dimension: 1200, quality: 0.62 },
+  { dimension: 1024, quality: 0.58 },
+  { dimension: 900, quality: 0.52 },
+  { dimension: 768, quality: 0.46 },
+  { dimension: 640, quality: 0.4 },
+];
 
 function drawToCanvas(
   source: ImageBitmap,
@@ -57,35 +60,23 @@ function drawToCanvas(
   return { canvas, width, height };
 }
 
-function canvasToBlob(
-  canvas: HTMLCanvasElement,
-  type: string,
-  quality: number
-): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (blob) resolve(blob);
-        else reject(new ImageProcessingError("Could not encode image"));
-      },
-      type,
-      quality
-    );
-  });
+function encode(canvas: HTMLCanvasElement, quality: number): string {
+  const webp = canvas.toDataURL("image/webp", quality);
+  // Older Safari silently falls back to PNG, which is far too large.
+  if (webp.startsWith("data:image/webp")) return webp;
+  return canvas.toDataURL("image/jpeg", quality);
 }
 
-async function encodeBest(
-  canvas: HTMLCanvasElement,
-  quality: number
-): Promise<Blob> {
-  const webp = await canvasToBlob(canvas, "image/webp", quality);
-  if (webp.type === "image/webp") return webp;
-  return canvasToBlob(canvas, "image/jpeg", quality);
+function bytesFromDataUrl(dataUrl: string): number {
+  const base64 = dataUrl.split(",")[1] ?? "";
+  return Math.round((base64.length * 3) / 4);
 }
 
-async function sha256(blob: Blob): Promise<string> {
-  const buffer = await blob.arrayBuffer();
-  const digest = await crypto.subtle.digest("SHA-256", buffer);
+async function sha256(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value)
+  );
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
@@ -103,32 +94,47 @@ export async function processImageFile(file: File): Promise<ProcessedImage> {
 
   const bitmap = await createImageBitmap(file);
   try {
-    const large = drawToCanvas(bitmap, LARGE_MAX_DIMENSION);
-    const thumb = drawToCanvas(bitmap, THUMB_MAX_DIMENSION);
+    let url = "";
+    let width = bitmap.width;
+    let height = bitmap.height;
 
-    const [largeBlob, thumbBlob] = await Promise.all([
-      encodeBest(large.canvas, 0.82),
-      encodeBest(thumb.canvas, 0.78),
-    ]);
+    for (const candidate of CANDIDATES) {
+      const drawn = drawToCanvas(bitmap, candidate.dimension);
+      const encoded = encode(drawn.canvas, candidate.quality);
+      if (encoded.length <= MAX_IMAGE_DATA_URL_CHARS) {
+        url = encoded;
+        width = drawn.width;
+        height = drawn.height;
+        break;
+      }
+    }
+
+    if (!url) {
+      throw new ImageProcessingError(
+        "This image is too detailed to store. Try a smaller or simpler image."
+      );
+    }
+
+    const thumb = drawToCanvas(bitmap, THUMB_MAX_DIMENSION);
+    const thumbUrl = encode(thumb.canvas, 0.72);
 
     return {
-      original: file,
-      large: largeBlob,
-      thumb: thumbBlob,
-      width: bitmap.width,
-      height: bitmap.height,
-      contentType: file.type,
-      ext: extensionFor(file.type),
-      sha256: await sha256(largeBlob),
+      url,
+      thumbUrl,
+      width,
+      height,
+      bytes: bytesFromDataUrl(url),
+      contentType: url.slice(5, url.indexOf(";")),
+      sha256: await sha256(url),
     };
   } finally {
     bitmap.close();
   }
 }
 
-export async function fileFromClipboard(
+export function imageFileFromClipboard(
   event: ClipboardEvent
-): Promise<File | null> {
+): File | null {
   const items = event.clipboardData?.items;
   if (!items) return null;
   for (const item of items) {

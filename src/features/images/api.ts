@@ -10,17 +10,9 @@ import {
   where,
 } from "firebase/firestore";
 
-import {
-  deleteObject,
-  getDownloadURL,
-  ref,
-  uploadBytes,
-} from "firebase/storage";
-
-import { db, storage } from "@/firebase/config";
+import { db } from "@/firebase/config";
 import { imageDoc, imagesCol } from "@/lib/firestore/paths";
 import { newId } from "@/lib/id";
-import { storagePaths } from "@/lib/storage-paths";
 import type { ImageAsset } from "@/types/models";
 import { processImageFile } from "@/features/images/process-image";
 
@@ -34,6 +26,10 @@ export interface UploadedImage {
   deduped: boolean;
 }
 
+/**
+ * Compresses the image and stores it as data URLs inside a Firestore document.
+ * No Cloud Storage bucket is involved.
+ */
 export async function uploadImage(options: {
   uid: string;
   drawingId: string;
@@ -54,93 +50,39 @@ export async function uploadImage(options: {
   }
 
   const imageId = newId();
-  const originalPath = storagePaths.original(
-    options.uid,
-    options.drawingId,
-    imageId,
-    processed.ext
-  );
-  const largePath = storagePaths.large(
-    options.uid,
-    options.drawingId,
-    imageId
-  );
-  const thumbPath = storagePaths.thumb(
-    options.uid,
-    options.drawingId,
-    imageId
-  );
 
-  const originalRef = ref(storage, originalPath);
-  const largeRef = ref(storage, largePath);
-  const thumbRef = ref(storage, thumbPath);
+  await setDoc(imageDoc(options.drawingId, imageId), {
+    drawingId: options.drawingId,
+    url: processed.url,
+    thumbUrl: processed.thumbUrl,
+    width: processed.width,
+    height: processed.height,
+    bytes: processed.bytes,
+    contentType: processed.contentType,
+    sha256: processed.sha256,
+    refCount: 0,
+    createdAt: serverTimestamp(),
+  });
 
-  try {
-    await Promise.all([
-      uploadBytes(originalRef, processed.original, {
-        contentType: processed.contentType,
-      }),
-      uploadBytes(largeRef, processed.large, { contentType: "image/webp" }),
-      uploadBytes(thumbRef, processed.thumb, { contentType: "image/webp" }),
-    ]);
-
-    const [url, thumbUrl] = await Promise.all([
-      getDownloadURL(largeRef),
-      getDownloadURL(thumbRef),
-    ]);
-
-    await setDoc(imageDoc(options.drawingId, imageId), {
+  return {
+    deduped: false,
+    asset: {
+      id: imageId,
       drawingId: options.drawingId,
-      storagePath: originalPath,
-      largePath,
-      thumbPath,
-      url,
-      thumbUrl,
+      url: processed.url,
+      thumbUrl: processed.thumbUrl,
       width: processed.width,
       height: processed.height,
-      bytes:
-        processed.original.size +
-        processed.large.size +
-        processed.thumb.size,
+      bytes: processed.bytes,
       contentType: processed.contentType,
       sha256: processed.sha256,
       refCount: 0,
-      createdAt: serverTimestamp(),
-    });
-
-    return {
-      deduped: false,
-      asset: {
-        id: imageId,
-        drawingId: options.drawingId,
-        storagePath: originalPath,
-        largePath,
-        thumbPath,
-        url,
-        thumbUrl,
-        width: processed.width,
-        height: processed.height,
-        bytes:
-          processed.original.size +
-          processed.large.size +
-          processed.thumb.size,
-        contentType: processed.contentType,
-        sha256: processed.sha256,
-        refCount: 0,
-        createdAt: new Date(),
-      },
-    };
-  } catch (error) {
-    await Promise.allSettled([
-      deleteObject(originalRef),
-      deleteObject(largeRef),
-      deleteObject(thumbRef),
-    ]);
-    throw error;
-  }
+      createdAt: new Date(),
+    },
+  };
 }
 
-/** Adds or removes one usage of an image. Deletes the asset when unused. */
+/** Adds or removes one usage of an image. Deletes the document when unused. */
 export async function adjustImageUsage(
   drawingId: string,
   imageId: string,
@@ -149,7 +91,7 @@ export async function adjustImageUsage(
   if (delta === 0) return false;
 
   const documentRef = imageDoc(drawingId, imageId);
-  let removedPaths: ImageAsset | null = null;
+  let removed = false;
 
   await runTransaction(db, async (transaction) => {
     const snapshot = await transaction.get(documentRef);
@@ -159,38 +101,19 @@ export async function adjustImageUsage(
     const next = (data.refCount ?? 0) + delta;
 
     if (next <= 0) {
-      removedPaths = data;
+      removed = true;
       transaction.delete(documentRef);
     } else {
       transaction.update(documentRef, { refCount: increment(delta) });
     }
   });
 
-  if (removedPaths) {
-    const asset = removedPaths as ImageAsset;
-    await deleteImageFiles(asset);
-    return true;
-  }
-
-  return false;
-}
-
-export async function deleteImageFiles(paths: {
-  storagePath: string;
-  largePath: string;
-  thumbPath: string;
-}): Promise<void> {
-  await Promise.allSettled([
-    deleteObject(ref(storage, paths.storagePath)),
-    deleteObject(ref(storage, paths.largePath)),
-    deleteObject(ref(storage, paths.thumbPath)),
-  ]);
+  return removed;
 }
 
 export async function deleteImageAsset(
   drawingId: string,
   asset: ImageAsset
 ): Promise<void> {
-  await deleteImageFiles(asset);
   await deleteDoc(imageDoc(drawingId, asset.id));
 }

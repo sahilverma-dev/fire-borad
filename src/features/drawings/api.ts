@@ -11,16 +11,10 @@ import {
   startAfter,
   where,
   writeBatch,
-} from "firebase/firestore";import {
-  deleteObject,
-  getBlob,
-  getDownloadURL,
-  ref,
-  uploadBytes,
-} from "firebase/storage";
+} from "firebase/firestore";
 
-import { db, storage } from "@/firebase/config";
 import { commitWrites, type PendingWrite } from "@/lib/firestore/batch";
+import { db } from "@/firebase/config";
 import { newId } from "@/lib/id";
 import {
   drawingsCol,
@@ -34,7 +28,6 @@ import {
   pagesCol,
   pagesRawCol,
 } from "@/lib/firestore/paths";
-import { storagePaths } from "@/lib/storage-paths";
 import type { BoardElement, Drawing, Page } from "@/types/models";
 
 export const DRAWINGS_PAGE_SIZE = 24;
@@ -190,7 +183,6 @@ export async function createDrawing(
         height: 1000,
         background: { type: "dots", color: "#ffffff" },
         thumbnailUrl: null,
-        thumbnailPath: null,
         elementCount: 0,
         version: 1,
         createdAt: serverTimestamp(),
@@ -276,7 +268,7 @@ async function deleteRefs(refs: DocumentReference[]): Promise<void> {
   }
 }
 
-/** Permanently removes a drawing, its pages, elements, image docs and files. */
+/** Permanently removes a drawing, its pages, elements and image documents. */
 export async function deleteDrawingPermanently(
   drawing: Drawing
 ): Promise<void> {
@@ -287,36 +279,11 @@ export async function deleteDrawingPermanently(
       elementsRawCol(drawing.id, page.id)
     );
     await deleteRefs(elementSnapshot.docs.map((element) => element.ref));
-
-    const thumbnailPath = page.data().thumbnailPath as string | undefined;
-    if (thumbnailPath) {
-      try {
-        await deleteObject(ref(storage, thumbnailPath));
-      } catch {
-        // Thumbnail already gone.
-      }
-    }
   }
 
   await deleteRefs(pagesSnapshot.docs.map((page) => page.ref));
 
   const imagesSnapshot = await getDocs(imagesRawCol(drawing.id));
-  for (const image of imagesSnapshot.docs) {
-    const data = image.data() as {
-      storagePath?: string;
-      largePath?: string;
-      thumbPath?: string;
-    };
-    for (const path of [data.storagePath, data.largePath, data.thumbPath]) {
-      if (!path) continue;
-      try {
-        await deleteObject(ref(storage, path));
-      } catch {
-        // Already gone — nothing to clean up.
-      }
-    }
-  }
-
   await deleteRefs(imagesSnapshot.docs.map((image) => image.ref));
   await deleteRefs([drawingDoc(drawing.id)]);
 }
@@ -359,9 +326,8 @@ export async function duplicateDrawing(
 
   for (const imageSnapshot of imagesSnapshot.docs) {
     const data = imageSnapshot.data() as {
-      storagePath: string;
-      largePath: string;
-      thumbPath: string;
+      url: string;
+      thumbUrl: string;
       width: number;
       height: number;
       bytes: number;
@@ -370,65 +336,26 @@ export async function duplicateDrawing(
     };
 
     const newImageId = newId();
-    const ext = data.storagePath.split(".").pop() ?? "png";
-    const newOriginalPath = storagePaths.original(
-      uid,
-      drawingId,
-      newImageId,
-      ext
-    );
-    const newLargePath = storagePaths.large(uid, drawingId, newImageId);
-    const newThumbPath = storagePaths.thumb(uid, drawingId, newImageId);
+    imageIdMap.set(imageSnapshot.id, newImageId);
 
-    try {
-      const [original, large, thumb] = await Promise.all([
-        getBlob(ref(storage, data.storagePath)),
-        getBlob(ref(storage, data.largePath)),
-        getBlob(ref(storage, data.thumbPath)),
-      ]);
-
-      await Promise.all([
-        uploadBytes(ref(storage, newOriginalPath), original, {
-          contentType: data.contentType,
-        }),
-        uploadBytes(ref(storage, newLargePath), large, {
-          contentType: "image/webp",
-        }),
-        uploadBytes(ref(storage, newThumbPath), thumb, {
-          contentType: "image/webp",
-        }),
-      ]);
-
-      const [url, thumbUrl] = await Promise.all([
-        getDownloadURL(ref(storage, newLargePath)),
-        getDownloadURL(ref(storage, newThumbPath)),
-      ]);
-
-      imageIdMap.set(imageSnapshot.id, newImageId);
-      const imageWrite: PendingWrite = {
-        ref: imageDoc(drawingId, newImageId),
-        data: {
-          drawingId,
-          storagePath: newOriginalPath,
-          largePath: newLargePath,
-          thumbPath: newThumbPath,
-          url,
-          thumbUrl,
-          width: data.width,
-          height: data.height,
-          bytes: data.bytes,
-          contentType: data.contentType,
-          sha256: data.sha256,
-          refCount: 0,
-          createdAt: serverTimestamp(),
-        },
-        mode: "set",
-      };
-      imageWrites.push(imageWrite);
-      imageWritesById.set(newImageId, imageWrite);
-    } catch {
-      // Skip images that cannot be copied; the rest of the drawing still copies.
-    }
+    const imageWrite: PendingWrite = {
+      ref: imageDoc(drawingId, newImageId),
+      data: {
+        drawingId,
+        url: data.url,
+        thumbUrl: data.thumbUrl,
+        width: data.width,
+        height: data.height,
+        bytes: data.bytes,
+        contentType: data.contentType,
+        sha256: data.sha256,
+        refCount: 0,
+        createdAt: serverTimestamp(),
+      },
+      mode: "set",
+    };
+    imageWrites.push(imageWrite);
+    imageWritesById.set(newImageId, imageWrite);
   }
 
   const writes: PendingWrite[] = [];
@@ -470,7 +397,6 @@ export async function duplicateDrawing(
         height: page.height,
         background: page.background,
         thumbnailUrl: null,
-        thumbnailPath: null,
         elementCount: page.elementCount,
         version: 1,
         createdAt: serverTimestamp(),
