@@ -47,7 +47,18 @@ export default function EditorPage() {
   const pagesQuery = usePages(drawingId);
   const pageQuery = usePage(drawingId, pageId);
   const elementsQuery = useElements(drawingId, pageId);
-  const imagesQuery = useDrawingImages(drawingId);
+  const imageIdsKey = useEditorStore((state) => {
+    const ids = new Set<string>();
+    for (const element of Object.values(state.elements)) {
+      if (element.type === "image") ids.add(element.imageId);
+    }
+    return [...ids].sort().join(",");
+  });
+  const imageIds = useMemo(
+    () => (imageIdsKey ? imageIdsKey.split(",") : []),
+    [imageIdsKey]
+  );
+  const imagesQuery = useDrawingImages(drawingId, imageIds);
   const renameDrawing = useRenameDrawing();
 
   const storePage = useEditorStore((state) => state.page);
@@ -135,16 +146,6 @@ export default function EditorPage() {
             file,
           });
 
-          queryClient.setQueryData<ImageAsset[]>(
-            queryKeys.images(drawingId),
-            (existing) => {
-              const list = existing ?? [];
-              return list.some((item) => item.id === asset.id)
-                ? list
-                : [...list, asset];
-            }
-          );
-
           const state = useEditorStore.getState();
           if (state.page?.id !== targetPageId) {
             toast.success("Image uploaded", { id: toastId });
@@ -176,6 +177,10 @@ export default function EditorPage() {
             updatedAt: new Date(),
             createdBy: uid,
           } as BoardElement);
+
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.images(drawingId),
+          });
 
           toast.success(deduped ? "Image reused" : "Image added", {
             id: toastId,

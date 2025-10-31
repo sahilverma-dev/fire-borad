@@ -1,5 +1,6 @@
 import {
   deleteDoc,
+  documentId,
   getDocs,
   increment,
   limit,
@@ -16,9 +17,37 @@ import { newId } from "@/lib/id";
 import type { ImageAsset } from "@/types/models";
 import { processImageFile } from "@/features/images/process-image";
 
-export async function fetchImages(drawingId: string): Promise<ImageAsset[]> {
-  const snapshot = await getDocs(imagesCol(drawingId));
-  return snapshot.docs.map((document) => document.data());
+export async function fetchImages(
+  drawingId: string,
+  imageIds?: string[]
+): Promise<ImageAsset[]> {
+  const collectionRef = imagesCol(drawingId);
+
+  if (!imageIds) {
+    const snapshot = await getDocs(collectionRef);
+    return snapshot.docs.map((document) => document.data());
+  }
+
+  if (!imageIds.length) return [];
+
+  const chunks: string[][] = [];
+  for (let index = 0; index < imageIds.length; index += 30) {
+    chunks.push(imageIds.slice(index, index + 30));
+  }
+
+  const snapshots = await Promise.all(
+    chunks.map((ids) =>
+      getDocs(query(collectionRef, where(documentId(), "in", ids)))
+    )
+  );
+
+  const byId = new Map<string, ImageAsset>();
+  for (const snapshot of snapshots) {
+    for (const document of snapshot.docs) {
+      byId.set(document.id, document.data());
+    }
+  }
+  return Array.from(byId.values());
 }
 
 export interface UploadedImage {

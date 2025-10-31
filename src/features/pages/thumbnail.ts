@@ -82,7 +82,7 @@ export async function svgToDataUrl(
   svg: string,
   width: number,
   height: number,
-  maxWidth = 720
+  maxWidth = 560
 ): Promise<string | null> {
   try {
     const scale = Math.min(1, maxWidth / Math.max(width, height));

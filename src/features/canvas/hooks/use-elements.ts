@@ -15,11 +15,12 @@ export function useElements(drawingId: string, pageId: string) {
   });
 }
 
-export function useDrawingImages(drawingId: string) {
+export function useDrawingImages(drawingId: string, imageIds: string[]) {
+  const key = imageIds.join(",");
   return useQuery({
-    queryKey: queryKeys.images(drawingId),
-    queryFn: () => fetchImages(drawingId),
-    enabled: Boolean(drawingId),
+    queryKey: [...queryKeys.images(drawingId), key],
+    queryFn: () => fetchImages(drawingId, imageIds),
+    enabled: Boolean(drawingId) && imageIds.length > 0,
     staleTime: 5 * 60 * 1000,
   });
 }
