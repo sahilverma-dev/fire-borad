@@ -214,6 +214,8 @@ export async function savePageThumbnail(options: {
   drawingId: string;
   pageId: string;
   dataUrl: string;
+  /** Smaller version used as the drawing cover on the dashboard. */
+  coverUrl?: string | null;
   isFirstPage: boolean;
 }): Promise<string> {
   const writes: PendingWrite[] = [
@@ -224,10 +226,10 @@ export async function savePageThumbnail(options: {
     },
   ];
 
-  if (options.isFirstPage) {
+  if (options.isFirstPage && options.coverUrl) {
     writes.push({
       ref: drawingDoc(options.drawingId),
-      data: { coverThumbUrl: options.dataUrl },
+      data: { coverThumbUrl: options.coverUrl },
       mode: "update",
     });
   }

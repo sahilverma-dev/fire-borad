@@ -82,7 +82,8 @@ export async function svgToDataUrl(
   svg: string,
   width: number,
   height: number,
-  maxWidth = 560
+  maxWidth = 400,
+  quality = 0.7
 ): Promise<string | null> {
   try {
     const scale = Math.min(1, maxWidth / Math.max(width, height));
@@ -105,9 +106,9 @@ export async function svgToDataUrl(
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-    const webp = canvas.toDataURL("image/webp", 0.72);
+    const webp = canvas.toDataURL("image/webp", quality);
     if (webp.startsWith("data:image/webp")) return webp;
-    return canvas.toDataURL("image/jpeg", 0.72);
+    return canvas.toDataURL("image/jpeg", quality);
   } catch {
     return null;
   }

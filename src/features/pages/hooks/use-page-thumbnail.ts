@@ -29,14 +29,23 @@ export function usePageThumbnail(options: {
         a.order.localeCompare(b.order)
       );
       const svg = elementsToSvg(elements, page);
-      const dataUrl = await svgToDataUrl(svg, page.width, page.height);
+
+      // Page strip thumbnail (max 400px).
+      const dataUrl = await svgToDataUrl(svg, page.width, page.height, 400, 0.7);
       if (!dataUrl) return;
+
+      // Dashboard cover is tiny and only needed for the first page.
+      const coverUrl =
+        options.isFirstPage
+          ? await svgToDataUrl(svg, page.width, page.height, 320, 0.55)
+          : null;
 
       try {
         await savePageThumbnail({
           drawingId: options.drawingId,
           pageId: page.id,
           dataUrl,
+          coverUrl,
           isFirstPage: options.isFirstPage,
         });
 
@@ -50,11 +59,11 @@ export function usePageThumbnail(options: {
             )
         );
 
-        if (options.isFirstPage) {
+        if (options.isFirstPage && coverUrl) {
           queryClient.setQueryData<Drawing | null>(
             queryKeys.drawing(options.drawingId),
             (drawing) =>
-              drawing ? { ...drawing, coverThumbUrl: dataUrl } : drawing
+              drawing ? { ...drawing, coverThumbUrl: coverUrl } : drawing
           );
         }
       } catch {
