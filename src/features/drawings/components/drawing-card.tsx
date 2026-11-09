@@ -35,7 +35,7 @@ export function DrawingCard({
   const navigate = useNavigate();
 
   return (
-    <article className="group relative flex flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+    <article className="group relative flex flex-col overflow-hidden rounded-lg border border-border bg-card shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
       <button
         type="button"
         onClick={() => navigate(`/d/${drawing.id}`)}

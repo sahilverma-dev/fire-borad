@@ -118,10 +118,10 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="space-y-7">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div className="space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Drawings</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Drawings</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {items.length > 0
               ? `${items.length}${drawings.hasNextPage ? "+" : ""} drawing${
@@ -165,8 +165,8 @@ export default function DashboardPage() {
       </div>
 
       {drawings.isLoading ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, index) => (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, index) => (
             <div key={index} className="overflow-hidden rounded-xl border">
               <Skeleton className="aspect-[16/10] w-full rounded-none" />
               <div className="space-y-2 p-4">
@@ -207,7 +207,7 @@ export default function DashboardPage() {
           />
         )
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {filtered.map((drawing) => (
             <DrawingCard
               key={drawing.id}
