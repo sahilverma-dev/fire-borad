@@ -113,9 +113,31 @@ export interface Page {
   thumbnailUrl: string | null;
   elementCount: number;
   version: number;
+  /** 1 = legacy BoardElement documents, 2 = dgmjs shape documents. */
+  schemaVersion?: number;
+  /** dgmjs viewport state, persisted per page. */
+  pageScale?: number;
+  pageOrigin?: number[] | null;
   createdAt: Date;
   updatedAt: Date;
   createdBy: string;
+}
+
+/** A raw document read from `.../pages/{pageId}/elements`. */
+export interface ShapeRecord {
+  id: string;
+  /** Present for v2 documents: the dgmjs shape JSON (without imageData). */
+  shape?: Record<string, unknown>;
+  /** Shape id -> image asset id, including nested images. */
+  imageIds?: Record<string, string>;
+  /** Order in the dgmjs page children array. */
+  index?: number;
+  /** Legacy BoardElement fields are present when `shape` is missing. */
+  legacy: boolean;
+  legacyData?: Record<string, unknown>;
+  createdAt: Date | null;
+  updatedAt: Date | null;
+  createdBy?: string;
 }
 
 export interface ImageAsset {

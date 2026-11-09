@@ -1,9 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
-import { savePageThumbnail } from "@/features/pages/api";
-import { elementsToSvg, svgToDataUrl } from "@/features/pages/thumbnail";
+import { renderPageThumbnail } from "@/features/canvas/lib/thumbnail";
 import { useEditorStore } from "@/features/canvas/store/editor-store";
+import { savePageThumbnail } from "@/features/pages/api";
 import { queryKeys } from "@/lib/query-keys";
 import type { Drawing, Page } from "@/types/models";
 
@@ -15,30 +15,25 @@ export function usePageThumbnail(options: {
   enabled: boolean;
 }) {
   const status = useEditorStore((state) => state.status);
+  const editor = useEditorStore((state) => state.editor);
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    if (!options.enabled || status !== "saved") return;
+    if (!options.enabled || status !== "saved" || !editor) return;
 
     const timer = window.setTimeout(async () => {
       const state = useEditorStore.getState();
-      if (!state.page || state.status !== "saved") return;
+      if (!state.editor || state.status !== "saved") return;
 
-      const page = state.page;
-      const elements = Object.values(state.elements).sort((a, b) =>
-        a.order.localeCompare(b.order)
-      );
-      const svg = elementsToSvg(elements, page);
+      const page = state.editor.getCurrentPage();
+      if (!page) return;
 
-      // Page strip thumbnail (max 400px).
-      const dataUrl = await svgToDataUrl(svg, page.width, page.height, 400, 0.7);
+      const dataUrl = renderPageThumbnail(state.editor, page, 400, 0.7);
       if (!dataUrl) return;
 
-      // Dashboard cover is tiny and only needed for the first page.
-      const coverUrl =
-        options.isFirstPage
-          ? await svgToDataUrl(svg, page.width, page.height, 320, 0.55)
-          : null;
+      const coverUrl = options.isFirstPage
+        ? renderPageThumbnail(state.editor, page, 320, 0.55)
+        : null;
 
       try {
         await savePageThumbnail({
@@ -72,5 +67,5 @@ export function usePageThumbnail(options: {
     }, THUMBNAIL_DELAY);
 
     return () => window.clearTimeout(timer);
-  }, [status, options.enabled, options.drawingId, options.isFirstPage, queryClient]);
+  }, [status, editor, options.enabled, options.drawingId, options.isFirstPage, queryClient]);
 }

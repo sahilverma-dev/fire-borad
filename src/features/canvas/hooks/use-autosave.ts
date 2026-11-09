@@ -1,88 +1,145 @@
 import { increment, serverTimestamp } from "firebase/firestore";
 import { useCallback, useEffect, useRef } from "react";
 
-import { elementRef, elementToDocument } from "@/features/canvas/api/elements";
+import { elementRef } from "@/features/canvas/api/shapes";
+import {
+  countImageUsage,
+  DGM_SCHEMA_VERSION,
+  pageShapes,
+  serializeShapeTree,
+  stableStringify,
+  type ShapeSnapshot,
+} from "@/features/canvas/lib/dgm";
 import { useEditorStore } from "@/features/canvas/store/editor-store";
 import { adjustImageUsage } from "@/features/images/api";
 import { friendlyFirestoreError } from "@/lib/firebase/errors";
 import { commitWrites, type PendingWrite } from "@/lib/firestore/batch";
 import { drawingDoc, pageDoc } from "@/lib/firestore/paths";
-import type { BoardElement } from "@/types/models";
+import type { MutableRefObject } from "react";
+
+import type { ImageAsset } from "@/types/models";
 
 const AUTOSAVE_DELAY = 700;
 
-function countImages(
-  elements: Record<string, BoardElement>
-): Map<string, number> {
-  const usage = new Map<string, number>();
-  for (const element of Object.values(elements)) {
-    if (element.type !== "image") continue;
-    usage.set(element.imageId, (usage.get(element.imageId) ?? 0) + 1);
-  }
-  return usage;
-}
-
-export function useAutosave(
-  drawingId: string,
-  pageId: string,
-  enabled: boolean
-) {
-  const status = useEditorStore((state) => state.status);
+export function useDgmAutosave(options: {
+  uid: string;
+  drawingId: string;
+  pageId: string;
+  enabled: boolean;
+  snapshotRef: MutableRefObject<ShapeSnapshot | null>;
+  images: Map<string, ImageAsset>;
+}) {
+  const { uid, drawingId, pageId, enabled, snapshotRef, images } = options;
   const revision = useEditorStore((state) => state.revision);
+  const status = useEditorStore((state) => state.status);
 
   const timer = useRef<number | null>(null);
   const inFlight = useRef<Promise<void> | null>(null);
-  const imageUsage = useRef<Map<string, number>>(new Map());
-  const imageUsageReady = useRef(false);
   const previousCount = useRef<number | null>(null);
+  const imageUsage = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     if (!enabled) return;
-    const elements = useEditorStore.getState().elements;
-    imageUsage.current = countImages(elements);
-    imageUsageReady.current = true;
-    previousCount.current = Object.keys(elements).length;
+    const editor = useEditorStore.getState().editor;
+    const page = editor?.getCurrentPage();
+    if (!page) return;
+    previousCount.current = pageShapes(page).length;
+    imageUsage.current = countImageUsage(page);
   }, [enabled, pageId]);
+
+  const resolveImageId = useCallback(
+    (dataUrl: string) => {
+      for (const asset of images.values()) {
+        if (asset.url === dataUrl) return asset.id;
+      }
+      return undefined;
+    },
+    [images]
+  );
 
   const runFlush = useCallback(async () => {
     const state = useEditorStore.getState();
-    if (state.page?.id !== pageId) return;
+    const editor = state.editor;
+    if (!editor || state.pageId !== pageId) return;
 
-    const dirty = state.dirty;
-    const deleted = state.deleted;
-    if (!Object.keys(dirty).length && !Object.keys(deleted).length) return;
+    const page = editor.getCurrentPage();
+    const snapshot = snapshotRef.current;
+    if (!page || !snapshot) return;
 
-    state.setStatus("saving");
-    state.setError(null);
-
+    const startRevision = state.revision;
+    const shapes = pageShapes(page);
     const writes: PendingWrite[] = [];
+    const nextSnapshot: ShapeSnapshot = {};
 
-    for (const id of Object.keys(dirty)) {
-      const element = state.elements[id];
-      if (!element) continue;
+    for (let index = 0; index < shapes.length; index += 1) {
+      const shape = shapes[index];
+      const { shape: json, imageIds } = serializeShapeTree(
+        shape,
+        resolveImageId
+      );
+      const jsonKey = stableStringify(json);
+      const imageIdsKey = stableStringify(imageIds);
+
+      nextSnapshot[shape.id] = {
+        index,
+        json: jsonKey,
+        imageIds: imageIdsKey,
+      };
+
+      const previous = snapshot[shape.id];
+      if (
+        previous &&
+        previous.index === index &&
+        previous.json === jsonKey &&
+        previous.imageIds === imageIdsKey
+      ) {
+        continue;
+      }
+
+      const data: Record<string, unknown> = {
+        index,
+        shape: json,
+        imageIds,
+        updatedAt: serverTimestamp(),
+      };
+      if (!previous) {
+        data.createdBy = uid;
+        data.createdAt = serverTimestamp();
+      }
+
       writes.push({
-        ref: elementRef(drawingId, pageId, id),
-        data: elementToDocument(element),
-        mode: "set",
+        ref: elementRef(drawingId, pageId, shape.id),
+        data,
+        mode: previous ? "set" : "replace",
       });
     }
 
-    for (const id of Object.keys(deleted)) {
-      writes.push({
-        ref: elementRef(drawingId, pageId, id),
-        mode: "delete",
-      });
+    const currentIds = new Set(shapes.map((shape) => shape.id));
+    for (const id of Object.keys(snapshot)) {
+      if (!currentIds.has(id)) {
+        writes.push({
+          ref: elementRef(drawingId, pageId, id),
+          mode: "delete",
+        });
+      }
     }
 
-    const count = Object.keys(state.elements).length;
-    const delta =
-      previousCount.current === null ? 0 : count - previousCount.current;
+    const count = shapes.length;
+    const previousTotal = previousCount.current ?? count;
+    const delta = count - previousTotal;
 
     writes.push({
       ref: pageDoc(drawingId, pageId),
-      data: { elementCount: count, updatedAt: serverTimestamp() },
+      data: {
+        elementCount: count,
+        schemaVersion: DGM_SCHEMA_VERSION,
+        pageScale: editor.getScale(),
+        pageOrigin: editor.getOrigin(),
+        updatedAt: serverTimestamp(),
+      },
       mode: "update",
     });
+
     writes.push({
       ref: drawingDoc(drawingId),
       data: {
@@ -92,40 +149,49 @@ export function useAutosave(
       mode: "update",
     });
 
+    state.markSaving();
+
     try {
       await commitWrites(writes);
-      previousCount.current = count;
-      useEditorStore.getState().markSaved(dirty, deleted);
 
-      if (imageUsageReady.current) {
-        const current = countImages(useEditorStore.getState().elements);
-        const imageIds = new Set([
-          ...imageUsage.current.keys(),
-          ...current.keys(),
-        ]);
-        for (const imageId of imageIds) {
-          const before = imageUsage.current.get(imageId) ?? 0;
-          const after = current.get(imageId) ?? 0;
-          if (before === after) continue;
-          try {
-            await adjustImageUsage(drawingId, imageId, after - before);
-            imageUsage.current.set(imageId, after);
-          } catch {
-            // Retried on the next save; the element write already succeeded.
-          }
+      snapshotRef.current = nextSnapshot;
+      previousCount.current = count;
+
+      const currentUsage = countImageUsage(page);
+      const imageIds = new Set([
+        ...imageUsage.current.keys(),
+        ...currentUsage.keys(),
+      ]);
+      for (const imageId of imageIds) {
+        const before = imageUsage.current.get(imageId) ?? 0;
+        const after = currentUsage.get(imageId) ?? 0;
+        if (before === after) continue;
+        try {
+          await adjustImageUsage(drawingId, imageId, after - before);
+        } catch {
+          // Retried on the next save; the shape write already succeeded.
         }
       }
+      imageUsage.current = currentUsage;
+
+      const latest = useEditorStore.getState();
+      if (latest.pageId !== pageId) return;
+      if (latest.revision === startRevision) {
+        latest.markSaved();
+      } else {
+        latest.setStatus("dirty");
+      }
     } catch (error) {
-      useEditorStore.getState().setStatus("error");
-      useEditorStore.getState().setError(friendlyFirestoreError(error));
+      const latest = useEditorStore.getState();
+      if (latest.pageId === pageId) {
+        latest.markError(friendlyFirestoreError(error));
+      }
     }
-  }, [drawingId, pageId]);
+  }, [drawingId, pageId, snapshotRef, uid, resolveImageId]);
 
   const flush = useCallback(async () => {
     if (!enabled) return;
 
-    // Wait for any save already on the wire so page switches never drop the
-    // most recent edits.
     if (inFlight.current) {
       await inFlight.current;
     }
@@ -133,10 +199,8 @@ export function useAutosave(
     if (!enabled) return;
 
     const state = useEditorStore.getState();
-    if (state.page?.id !== pageId) return;
-    if (!Object.keys(state.dirty).length && !Object.keys(state.deleted).length) {
-      return;
-    }
+    if (state.pageId !== pageId || !state.editor) return;
+    if (state.status === "saved") return;
 
     const promise = runFlush();
     inFlight.current = promise;
@@ -146,6 +210,14 @@ export function useAutosave(
       if (inFlight.current === promise) inFlight.current = null;
     }
   }, [enabled, pageId, runFlush]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    useEditorStore.getState().setFlush(flush);
+    return () => {
+      useEditorStore.getState().setFlush(null);
+    };
+  }, [enabled, flush]);
 
   useEffect(() => {
     if (!enabled || status !== "dirty") return;
@@ -165,12 +237,13 @@ export function useAutosave(
   }, [revision, status, enabled, flush]);
 
   useEffect(() => {
+    if (!enabled) return;
     const onHidden = () => {
       if (document.visibilityState === "hidden") void flush();
     };
     document.addEventListener("visibilitychange", onHidden);
     return () => document.removeEventListener("visibilitychange", onHidden);
-  }, [flush]);
+  }, [enabled, flush]);
 
   useEffect(() => {
     return () => {

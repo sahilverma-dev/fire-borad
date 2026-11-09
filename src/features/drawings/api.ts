@@ -185,6 +185,7 @@ export async function createDrawing(
         thumbnailUrl: null,
         elementCount: 0,
         version: 1,
+        schemaVersion: 2,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         createdBy: uid,
@@ -399,6 +400,7 @@ export async function duplicateDrawing(
         thumbnailUrl: null,
         elementCount: page.elementCount,
         version: 1,
+        schemaVersion: 2,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         createdBy: uid,
@@ -411,8 +413,39 @@ export async function duplicateDrawing(
     );
 
     for (const elementSnapshot of elementsSnapshot.docs) {
-      const element = elementSnapshot.data() as BoardElement;
-      let copy = preparedElement(element, uid, now);
+      const raw = elementSnapshot.data() as Record<string, unknown>;
+
+      if (raw.shape && typeof raw.shape === "object") {
+        const shape = structuredClone(raw.shape) as Record<string, unknown>;
+        shape.parent = newPageId;
+        const oldImageIds =
+          raw.imageIds && typeof raw.imageIds === "object"
+            ? (raw.imageIds as Record<string, string>)
+            : {};
+        const imageIds: Record<string, string> = {};
+        for (const [shapeId, oldImageId] of Object.entries(oldImageIds)) {
+          const mapped = imageIdMap.get(oldImageId);
+          if (!mapped) continue;
+          imageIds[shapeId] = mapped;
+          imageUsage.set(mapped, (imageUsage.get(mapped) ?? 0) + 1);
+        }
+
+        writes.push({
+          ref: elementDoc(drawingId, newPageId, elementSnapshot.id),
+          data: {
+            index: typeof raw.index === "number" ? raw.index : 0,
+            shape,
+            imageIds,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            createdBy: uid,
+          },
+          mode: "set",
+        });
+        continue;
+      }
+
+      let copy = preparedElement(raw as unknown as BoardElement, uid, now);
 
       if (copy.type === "image") {
         const mapped = imageIdMap.get(copy.imageId);

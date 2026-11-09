@@ -1,40 +1,48 @@
-import {
-  ArrowLeft,
-  Keyboard,
-  Loader2,
-  Redo2,
-  Undo2,
-} from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Image as DGMImage, Sizable } from "@dgmjs/core";
+import { useQueryClient } from "@tanstack/react-query";
+import { ImagePlus, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 
-import { ThemeToggle } from "@/components/custom/theme-toggle";
-import { UserMenu } from "@/components/custom/user-menu";
 import { useAuth } from "@/components/providers/auth-context-provider";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
-import { SaveIndicator } from "@/components/shared/save-indicator";
 import { Button } from "@/components/ui/button";
-import { Canvas } from "@/features/canvas/components/canvas";
-import { PropertiesPanel } from "@/features/canvas/components/properties-panel";
+import { DgmCanvas } from "@/features/canvas/components/dgm-canvas";
+import { EditorToolbar } from "@/features/canvas/components/editor-toolbar";
+import { EditorTopBars } from "@/features/canvas/components/editor-top-bars";
+import { ExportDialog } from "@/features/canvas/components/export-dialog";
+import { InspectorPanel } from "@/features/canvas/components/inspector-panel";
+import { NavigatorPanel } from "@/features/canvas/components/navigator-panel";
 import { ShortcutsDialog } from "@/features/canvas/components/shortcuts-dialog";
-import { ToolRail } from "@/features/canvas/components/tool-rail";
-import { useAutosave } from "@/features/canvas/hooks/use-autosave";
-import { useDrawingImages, useElements } from "@/features/canvas/hooks/use-elements";
-import { defaultStyle } from "@/features/canvas/lib/defaults";
+import {
+  useDrawingImages,
+  usePageShapes,
+} from "@/features/canvas/hooks/use-elements";
 import { useEditorStore } from "@/features/canvas/store/editor-store";
+import { setLastPage } from "@/features/drawings/api";
 import { useDrawing, useRenameDrawing } from "@/features/drawings/hooks";
 import { uploadImage } from "@/features/images/api";
-import { PageStrip } from "@/features/pages/components/page-strip";
-import { usePage } from "@/features/pages/hooks";
-import { usePageThumbnail } from "@/features/pages/hooks/use-page-thumbnail";
-import { setLastPage } from "@/features/drawings/api";
-import { usePages } from "@/features/pages/hooks";
+import {
+  useCreatePage,
+  useDeletePage,
+  useDuplicatePage,
+  usePage,
+  usePages,
+  useRenamePage,
+  useReorderPage,
+  useUpdatePageSettings,
+} from "@/features/pages/hooks";
+import { friendlyFirestoreError } from "@/lib/firebase/errors";
+import { orderAtEnd, orderBetween } from "@/lib/firestore/fractional";
 import { queryKeys } from "@/lib/query-keys";
-import { orderAtEnd } from "@/lib/firestore/fractional";
-import { newId } from "@/lib/id";
-import type { BoardElement, ImageAsset } from "@/types/models";
-import { useQueryClient } from "@tanstack/react-query";
+import type { ImageAsset, Page } from "@/types/models";
+
+function initialPanelState() {
+  if (typeof window === "undefined") return true;
+  return window.innerWidth >= 1024;
+}
 
 export default function EditorPage() {
   const { drawingId = "", pageId = "" } = useParams();
@@ -46,62 +54,28 @@ export default function EditorPage() {
   const drawingQuery = useDrawing(drawingId);
   const pagesQuery = usePages(drawingId);
   const pageQuery = usePage(drawingId, pageId);
-  const elementsQuery = useElements(drawingId, pageId);
-  const imageIdsKey = useEditorStore((state) => {
-    const ids = new Set<string>();
-    for (const element of Object.values(state.elements)) {
-      if (element.type === "image") ids.add(element.imageId);
-    }
-    return [...ids].sort().join(",");
-  });
-  const imageIds = useMemo(
-    () => (imageIdsKey ? imageIdsKey.split(",") : []),
-    [imageIdsKey]
-  );
-  const imagesQuery = useDrawingImages(drawingId, imageIds);
-  const renameDrawing = useRenameDrawing();
+  const shapesQuery = usePageShapes(drawingId, pageId);
+  const imagesQuery = useDrawingImages(drawingId);
 
-  const storePage = useEditorStore((state) => state.page);
-  const status = useEditorStore((state) => state.status);
-  const error = useEditorStore((state) => state.error);
-  const past = useEditorStore((state) => state.past);
-  const future = useEditorStore((state) => state.future);
-  const hydrate = useEditorStore((state) => state.hydrate);
-  const undo = useEditorStore((state) => state.undo);
-  const redo = useEditorStore((state) => state.redo);
+  const renameDrawing = useRenameDrawing();
+  const createPage = useCreatePage(drawingId);
+  const duplicatePage = useDuplicatePage(drawingId);
+  const deletePage = useDeletePage(drawingId);
+  const renamePage = useRenamePage(drawingId);
+  const reorderPage = useReorderPage(drawingId);
+  const updatePageSettings = useUpdatePageSettings(drawingId, pageId);
 
   const [title, setTitle] = useState("");
+  const [navigatorOpen, setNavigatorOpen] = useState(initialPanelState);
+  const [inspectorOpen, setInspectorOpen] = useState(initialPanelState);
+  const [exportOpen, setExportOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const hydrated = useRef<string | null>(null);
-
-  const ready = storePage?.id === pageId && elementsQuery.isSuccess;
-  const { flush } = useAutosave(drawingId, pageId, ready);
-
-  usePageThumbnail({
-    drawingId,
-    isFirstPage: pagesQuery.data?.[0]?.id === pageId,
-    enabled: ready,
-  });
+  const [deletingPage, setDeletingPage] = useState<Page | null>(null);
+  const fileInput = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (drawingQuery.data) {
-      setTitle(drawingQuery.data.title);
-    }
+    if (drawingQuery.data) setTitle(drawingQuery.data.title);
   }, [drawingQuery.data]);
-
-  useEffect(() => {
-    if (
-      !pageQuery.data ||
-      pageQuery.data.id !== pageId ||
-      !elementsQuery.data
-    ) {
-      return;
-    }
-    if (hydrated.current === pageId) return;
-    hydrate(pageQuery.data, elementsQuery.data);
-    hydrated.current = pageId;
-  }, [pageQuery.data, elementsQuery.data, pageId, hydrate]);
 
   useEffect(() => {
     if (!drawingId || !pageId) return;
@@ -117,13 +91,17 @@ export default function EditorPage() {
     };
   }, [drawingQuery.data]);
 
-  const imagesById = useMemo(() => {
-    const map = new Map<string, ImageAsset>();
-    for (const asset of imagesQuery.data ?? []) {
-      map.set(asset.id, asset);
-    }
-    return map;
-  }, [imagesQuery.data]);
+  const flush = useCallback(async () => {
+    await useEditorStore.getState().flush?.();
+  }, []);
+
+  const handleNavigate = useCallback(
+    async (target: string) => {
+      await flush();
+      navigate(`/d/${drawingId}/p/${target}`);
+    },
+    [drawingId, flush, navigate]
+  );
 
   const commitTitle = () => {
     const trimmed = title.trim();
@@ -132,12 +110,129 @@ export default function EditorPage() {
     renameDrawing.mutate({ drawingId, title: trimmed });
   };
 
+  const pages = pagesQuery.data ?? [];
+  const page = pageQuery.data;
+
+  const handleAddPage = async () => {
+    if (!page) return;
+    try {
+      const order = orderAtEnd(pages.map((item) => item.order));
+      const nextPageId = await createPage.mutateAsync({
+        uid,
+        order,
+        name: `Page ${pages.length + 1}`,
+      });
+      await handleNavigate(nextPageId);
+    } catch (error) {
+      toast.error(friendlyFirestoreError(error));
+    }
+  };
+
+  const handleDuplicatePage = async (source: Page) => {
+    try {
+      await flush();
+      const index = pages.findIndex((item) => item.id === source.id);
+      const nextOrder = pages[index + 1]?.order ?? null;
+      const order = orderBetween(source.order, nextOrder);
+      const nextPageId = await duplicatePage.mutateAsync({
+        page: source,
+        uid,
+        order,
+      });
+      await handleNavigate(nextPageId);
+      toast.success("Page duplicated");
+    } catch (error) {
+      toast.error(friendlyFirestoreError(error));
+    }
+  };
+
+  const handleDeletePage = async () => {
+    if (!deletingPage) return;
+    if (pages.length <= 1) {
+      toast.error("A drawing needs at least one page");
+      setDeletingPage(null);
+      return;
+    }
+
+    await flush();
+    const target = deletingPage;
+    const fallback = pages.find((item) => item.id !== target.id)?.id ?? null;
+    try {
+      await deletePage.mutateAsync({ page: target, nextPageId: fallback });
+      setDeletingPage(null);
+      toast.success("Page deleted");
+      if (target.id === pageId && fallback) {
+        await handleNavigate(fallback);
+      }
+    } catch (error) {
+      toast.error(friendlyFirestoreError(error));
+    }
+  };
+
+  const handleRenamePage = async (targetPageId: string, name: string) => {
+    try {
+      await renamePage.mutateAsync({ pageId: targetPageId, name });
+    } catch (error) {
+      toast.error(friendlyFirestoreError(error));
+    }
+  };
+
+  const handleReorderPage = async (targetPageId: string, order: string) => {
+    try {
+      await reorderPage.mutateAsync({ pageId: targetPageId, order });
+    } catch (error) {
+      toast.error(friendlyFirestoreError(error));
+    }
+  };
+
+  const handleUpdatePage = (patch: {
+    name?: string;
+    width?: number;
+    height?: number;
+    background?: Page["background"];
+  }) => {
+    updatePageSettings.mutate(patch, {
+      onError: (error) => toast.error(friendlyFirestoreError(error)),
+    });
+  };
+
+  const insertImageAsset = useCallback(
+    (asset: ImageAsset) => {
+      const editor = useEditorStore.getState().editor;
+      const dgmPage = editor?.getCurrentPage();
+      const currentPage = pageQuery.data;
+      if (!editor || !dgmPage || !currentPage) return;
+
+      const maxWidth = Math.min(560, currentPage.width * 0.6);
+      const scale = Math.min(1, maxWidth / Math.max(asset.width, 1));
+      const width = Math.max(80, asset.width * scale);
+      const height = Math.max(80, asset.height * scale);
+
+      const shape = new DGMImage();
+      shape.imageData = asset.url;
+      shape.imageWidth = asset.width;
+      shape.imageHeight = asset.height;
+      shape.width = width;
+      shape.height = height;
+      shape.left = (currentPage.width - width) / 2;
+      shape.top = (currentPage.height - height) / 2;
+      shape.sizable = Sizable.RATIO;
+      shape.textEditable = false;
+      (shape as DGMImage & { __imageId?: string }).__imageId = asset.id;
+
+      editor.actions.insert(shape);
+      editor.selection.select([shape]);
+      editor.repaint();
+    },
+    [pageQuery.data]
+  );
+
   const handleFiles = useCallback(
     async (files: File[]) => {
-      const targetPageId = useEditorStore.getState().page?.id;
-      if (!targetPageId) return;
+      const images = files.filter((file) => file.type.startsWith("image/"));
+      if (!images.length) return;
 
-      for (const file of files) {
+      for (const file of images) {
         const toastId = toast.loading(`Uploading ${file.name}…`);
         try {
           const { asset, deduped } = await uploadImage({
@@ -145,57 +240,22 @@ export default function EditorPage() {
             drawingId,
             file,
           });
-
-          const state = useEditorStore.getState();
-          if (state.page?.id !== targetPageId) {
-            toast.success("Image uploaded", { id: toastId });
-            continue;
-          }
-
-          const maxWidth = Math.min(560, state.page.width * 0.6);
-          const scale = Math.min(1, maxWidth / asset.width);
-          const width = Math.max(80, asset.width * scale);
-          const height = Math.max(80, asset.height * scale);
-
-          state.addElement({
-            id: newId(),
-            type: "image",
-            x: state.page.width / 2 - width / 2,
-            y: state.page.height / 2 - height / 2,
-            w: width,
-            h: height,
-            order: orderAtEnd(
-              Object.values(state.elements).map((element) => element.order)
-            ),
-            angle: 0,
-            opacity: 1,
-            style: defaultStyle,
-            imageId: asset.id,
-            naturalWidth: asset.width,
-            naturalHeight: asset.height,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            createdBy: uid,
-          } as BoardElement);
-
+          insertImageAsset(asset);
           void queryClient.invalidateQueries({
             queryKey: queryKeys.images(drawingId),
           });
-
           toast.success(deduped ? "Image reused" : "Image added", {
             id: toastId,
           });
-        } catch (uploadError) {
+        } catch (error) {
           toast.error(
-            uploadError instanceof Error
-              ? uploadError.message
-              : "Could not upload that image",
+            error instanceof Error ? error.message : "Could not upload that image",
             { id: toastId }
           );
         }
       }
     },
-    [drawingId, queryClient, uid]
+    [drawingId, insertImageAsset, queryClient, uid]
   );
 
   useEffect(() => {
@@ -219,16 +279,12 @@ export default function EditorPage() {
     return () => window.removeEventListener("paste", onPaste);
   }, [handleFiles]);
 
-  const handleNavigate = async (target: string) => {
-    await flush();
-    navigate(`/d/${drawingId}/p/${target}`);
-  };
-
   if (
     drawingQuery.isLoading ||
     pagesQuery.isLoading ||
     pageQuery.isLoading ||
-    elementsQuery.isLoading
+    shapesQuery.isLoading ||
+    imagesQuery.isLoading
   ) {
     return (
       <div className="flex h-[100dvh] items-center justify-center bg-background text-sm text-muted-foreground">
@@ -242,11 +298,11 @@ export default function EditorPage() {
     return <Navigate to="/trash" replace />;
   }
 
-  if (!drawingQuery.data || !pageQuery.data) {
+  if (!drawingQuery.data || !page) {
     return (
       <div className="flex h-[100dvh] items-center justify-center px-6">
         <EmptyState
-          icon={ArrowLeft}
+          icon={ImagePlus}
           title="This drawing is not available"
           description="It may have been deleted, or the link is incorrect."
           action={
@@ -259,115 +315,85 @@ export default function EditorPage() {
     );
   }
 
-  const pages = pagesQuery.data ?? [];
-
   return (
-    <div className="flex h-[100dvh] flex-col overflow-hidden bg-background">
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-2 sm:px-3">
-        <Button variant="ghost" size="icon" asChild aria-label="Back to drawings">
-          <Link to="/">
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
-        </Button>
-
-        <input
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          onBlur={commitTitle}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.currentTarget.blur();
-            }
-            if (event.key === "Escape") {
-              setTitle(drawingQuery.data?.title ?? "");
-              event.currentTarget.blur();
-            }
-          }}
-          className="min-w-0 max-w-[16rem] flex-1 truncate rounded-md bg-transparent px-2 py-1 text-sm font-medium outline-none transition focus:bg-accent focus:ring-1 focus:ring-ring sm:max-w-xs"
-          aria-label="Drawing title"
-        />
-
-        <SaveIndicator
-          status={status}
-          error={error}
-          onRetry={() => void flush()}
-          className="ml-1 hidden sm:flex"
-        />
-
-        <div className="ml-auto flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="hidden sm:inline-flex"
-            disabled={!past.length}
-            onClick={undo}
-            aria-label="Undo"
-          >
-            <Undo2 className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="hidden sm:inline-flex"
-            disabled={!future.length}
-            onClick={redo}
-            aria-label="Redo"
-          >
-            <Redo2 className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="hidden sm:inline-flex"
-            onClick={() => setShortcutsOpen(true)}
-            aria-label="Keyboard shortcuts"
-          >
-            <Keyboard className="h-4 w-4" />
-          </Button>
-          <div className="mx-1 hidden h-6 w-px bg-border sm:block" />
-          <ThemeToggle />
-          <UserMenu />
-        </div>
-      </header>
-
-      {status === "error" && error ? (
-        <div className="flex items-center justify-between gap-3 border-b border-destructive/20 bg-destructive/5 px-4 py-1.5 text-xs text-destructive">
-          <span>{error}</span>
-          <button
-            type="button"
-            className="underline underline-offset-2"
-            onClick={() => void flush()}
-          >
-            Retry save
-          </button>
-        </div>
-      ) : null}
-
-      <div className="relative flex min-h-0 flex-1">
-        <ToolRail onRequestImage={() => fileInputRef.current?.click()} />
-        <div className="relative min-w-0 flex-1">
-          <Canvas
-            uid={uid}
-            page={pageQuery.data}
-            imagesById={imagesById}
-            onRequestImage={() => fileInputRef.current?.click()}
-            onDropFiles={(files) => void handleFiles(files)}
-          />
-        </div>
-        <PropertiesPanel />
-      </div>
-
-      <PageStrip
-        drawingId={drawingId}
+    <div className="fixed inset-0 h-[100dvh] w-full select-none overflow-hidden bg-muted/20">
+      <DgmCanvas
+        key={page.id}
         uid={uid}
+        drawingId={drawingId}
+        page={page}
+        records={shapesQuery.data ?? []}
+        images={imagesQuery.imagesById}
+        isFirstPage={pages[0]?.id === page.id}
+        onRequestImage={() => fileInput.current?.click()}
+        onDropFiles={(files) => void handleFiles(files)}
+      />
+
+      <EditorTopBars
+        title={title}
+        onTitleChange={setTitle}
+        onCommitTitle={commitTitle}
+        onBack={() => {
+          void flush().then(() => navigate("/"));
+        }}
+        onExport={() => setExportOpen(true)}
+        onShowShortcuts={() => setShortcutsOpen(true)}
+        navigatorOpen={navigatorOpen}
+        onToggleNavigator={() => setNavigatorOpen((value) => !value)}
+        inspectorOpen={inspectorOpen}
+        onToggleInspector={() => setInspectorOpen((value) => !value)}
+        onAddPage={() => void handleAddPage()}
+        onDuplicatePage={() => void handleDuplicatePage(page)}
+        onDeletePage={() => setDeletingPage(page)}
+      />
+
+      <NavigatorPanel
+        open={navigatorOpen}
         pages={pages}
-        currentPageId={pageId}
+        currentPageId={page.id}
         onNavigate={(target) => void handleNavigate(target)}
-        onBeforeNavigate={flush}
+        onAddPage={() => void handleAddPage()}
+        onDuplicatePage={(target) => void handleDuplicatePage(target)}
+        onRequestDeletePage={setDeletingPage}
+        onRenamePage={handleRenamePage}
+        onReorderPage={handleReorderPage}
+      />
+
+      <InspectorPanel
+        open={inspectorOpen}
+        page={page}
+        onUpdatePage={handleUpdatePage}
+      />
+
+      <EditorToolbar onRequestImage={() => fileInput.current?.click()} />
+
+      <ExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        fileName={drawingQuery.data.title}
+      />
+
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+
+      <ConfirmDialog
+        open={Boolean(deletingPage)}
+        onOpenChange={(open) => {
+          if (!open) setDeletingPage(null);
+        }}
+        title="Delete this page?"
+        description={
+          deletingPage
+            ? `“${deletingPage.name}” and everything on it will be permanently deleted.`
+            : ""
+        }
+        confirmLabel="Delete page"
+        destructive
+        loading={deletePage.isPending}
+        onConfirm={() => void handleDeletePage()}
       />
 
       <input
-        ref={fileInputRef}
+        ref={fileInput}
         type="file"
         accept="image/png,image/jpeg,image/webp,image/gif"
         multiple
@@ -378,8 +404,6 @@ export default function EditorPage() {
           event.target.value = "";
         }}
       />
-
-      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </div>
   );
 }

@@ -20,7 +20,7 @@ import {
   pageTypedDoc,
   pagesCol,
 } from "@/lib/firestore/paths";
-import type { BoardElement, Page } from "@/types/models";
+import type { Page } from "@/types/models";
 
 export async function fetchPages(drawingId: string): Promise<Page[]> {
   const snapshot = await getDocs(query(pagesCol(drawingId), orderBy("order")));
@@ -54,6 +54,7 @@ export async function createPage(options: {
     thumbnailUrl: null,
     elementCount: 0,
     version: 1,
+    schemaVersion: 2,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     createdBy: options.uid,
@@ -100,6 +101,33 @@ export async function updatePageOrder(
   ]);
 }
 
+export async function updatePageSettings(
+  drawingId: string,
+  pageId: string,
+  patch: {
+    name?: string;
+    width?: number;
+    height?: number;
+    background?: Page["background"];
+  }
+): Promise<void> {
+  const data: Record<string, unknown> = { updatedAt: serverTimestamp() };
+  if (typeof patch.name === "string") {
+    data.name = patch.name.trim() || "Untitled page";
+  }
+  if (typeof patch.width === "number") data.width = patch.width;
+  if (typeof patch.height === "number") data.height = patch.height;
+  if (patch.background) data.background = patch.background;
+
+  await commitWrites([
+    {
+      ref: pageDoc(drawingId, pageId),
+      data,
+      mode: "update",
+    },
+  ]);
+}
+
 export async function duplicatePage(
   drawingId: string,
   page: Page,
@@ -107,11 +135,14 @@ export async function duplicatePage(
   order: string
 ): Promise<string> {
   const pageId = newId();
-  const elementsSnapshot = await getDocs(
-    elementsRawCol(drawingId, page.id)
-  );
+  const elementsSnapshot = await getDocs(elementsRawCol(drawingId, page.id));
   const writes: PendingWrite[] = [];
   const imageUsage = new Map<string, number>();
+
+  const trackImage = (imageId: string | undefined | null) => {
+    if (!imageId) return;
+    imageUsage.set(imageId, (imageUsage.get(imageId) ?? 0) + 1);
+  };
 
   writes.push({
     ref: pageDoc(drawingId, pageId),
@@ -123,8 +154,9 @@ export async function duplicatePage(
       height: page.height,
       background: page.background,
       thumbnailUrl: null,
-      elementCount: elementsSnapshot.size,
+      elementCount: page.elementCount,
       version: 1,
+      schemaVersion: 2,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       createdBy: uid,
@@ -133,17 +165,44 @@ export async function duplicatePage(
   });
 
   for (const element of elementsSnapshot.docs) {
-    const data = element.data() as BoardElement;
-    delete (data as { id?: string }).id;
-    delete (data as { createdAt?: unknown }).createdAt;
-    delete (data as { updatedAt?: unknown }).updatedAt;
-    if (data.type === "image") {
-      imageUsage.set(data.imageId, (imageUsage.get(data.imageId) ?? 0) + 1);
+    const data = element.data() as Record<string, unknown>;
+
+    if (data.shape && typeof data.shape === "object") {
+      const shape = structuredClone(data.shape) as Record<string, unknown>;
+      shape.parent = pageId;
+      const imageIds =
+        data.imageIds && typeof data.imageIds === "object"
+          ? (data.imageIds as Record<string, string>)
+          : {};
+      for (const imageId of Object.values(imageIds)) trackImage(imageId);
+
+      writes.push({
+        ref: elementDoc(drawingId, pageId, element.id),
+        data: {
+          index: typeof data.index === "number" ? data.index : 0,
+          shape,
+          imageIds,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          createdBy: uid,
+        },
+        mode: "set",
+      });
+      continue;
     }
+
+    const legacy = { ...data };
+    delete legacy.id;
+    delete legacy.createdAt;
+    delete legacy.updatedAt;
+    if (legacy.type === "image") {
+      trackImage(legacy.imageId as string | undefined);
+    }
+
     writes.push({
       ref: elementDoc(drawingId, pageId, newId()),
       data: {
-        ...data,
+        ...legacy,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         createdBy: uid,
@@ -176,15 +235,24 @@ export async function deletePage(
   page: Page,
   nextPageId: string | null
 ): Promise<void> {
-  const elementsSnapshot = await getDocs(
-    elementsRawCol(drawingId, page.id)
-  );
+  const elementsSnapshot = await getDocs(elementsRawCol(drawingId, page.id));
   const imageUsage = new Map<string, number>();
 
+  const trackImage = (imageId: string | undefined | null) => {
+    if (!imageId) return;
+    imageUsage.set(imageId, (imageUsage.get(imageId) ?? 0) + 1);
+  };
+
   for (const element of elementsSnapshot.docs) {
-    const data = element.data() as BoardElement;
-    if (data.type === "image") {
-      imageUsage.set(data.imageId, (imageUsage.get(data.imageId) ?? 0) + 1);
+    const data = element.data() as Record<string, unknown>;
+    if (data.imageIds && typeof data.imageIds === "object") {
+      for (const imageId of Object.values(
+        data.imageIds as Record<string, string>
+      )) {
+        trackImage(imageId);
+      }
+    } else if (data.type === "image") {
+      trackImage(data.imageId as string | undefined);
     }
   }
 

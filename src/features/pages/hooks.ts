@@ -8,6 +8,7 @@ import {
   fetchPages,
   renamePage,
   updatePageOrder,
+  updatePageSettings,
 } from "@/features/pages/api";
 import { queryKeys } from "@/lib/query-keys";
 import type { Page } from "@/types/models";
@@ -74,6 +75,26 @@ export function useReorderPage(drawingId: string) {
     mutationFn: ({ pageId, order }: { pageId: string; order: string }) =>
       updatePageOrder(drawingId, pageId, order),
     onSuccess: refresh,
+  });
+}
+
+export function useUpdatePageSettings(drawingId: string, pageId: string) {
+  const queryClient = useQueryClient();
+  const refresh = useRefreshPages(drawingId);
+  return useMutation({
+    mutationFn: (patch: {
+      name?: string;
+      width?: number;
+      height?: number;
+      background?: Page["background"];
+    }) => updatePageSettings(drawingId, pageId, patch),
+    onSuccess: (_, patch) => {
+      refresh();
+      queryClient.setQueryData<Page | null>(
+        queryKeys.page(drawingId, pageId),
+        (page) => (page ? { ...page, ...patch } : page)
+      );
+    },
   });
 }
 

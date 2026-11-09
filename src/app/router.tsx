@@ -1,12 +1,12 @@
 import { createBrowserRouter } from "react-router-dom";
 
 import { AppShell } from "@/app/layouts/app-shell";
+import { EditorRoute } from "@/app/editor-route";
 import { PublicOnly } from "@/app/guards/public-only";
 import { RequireAuth } from "@/app/guards/require-auth";
 import { RouteError } from "@/app/route-error";
 import DashboardPage from "@/routes/dashboard";
 import DrawingResolverPage from "@/routes/drawing-resolver";
-import EditorPage from "@/routes/editor";
 import LoginPage from "@/routes/login";
 import NotFoundPage from "@/routes/not-found";
 import SettingsPage from "@/routes/settings";
@@ -32,7 +32,7 @@ export const router = createBrowserRouter([
             ],
           },
           { path: "d/:drawingId", element: <DrawingResolverPage /> },
-          { path: "d/:drawingId/p/:pageId", element: <EditorPage /> },
+          { path: "d/:drawingId/p/:pageId", element: <EditorRoute /> },
         ],
       },
       { path: "*", element: <NotFoundPage /> },
